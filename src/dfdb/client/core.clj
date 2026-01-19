@@ -1,6 +1,7 @@
 (ns dfdb.client.core
   "Clojure client for dfdb-go remote API"
-  (:require [dfdb.client.http :as http]))
+  (:require [dfdb.client.http :as http]
+            [dfdb.client.websocket :as ws]))
 
 (defrecord Connection [base-url timeout max-retries])
 
@@ -388,3 +389,75 @@
           (:body response)
           (throw (ex-info (str "Query view failed: " (:error response))
                           {:response response})))))))
+
+;; WebSocket Delta Streaming API
+
+(defn stream-connect
+  "Connect to the WebSocket delta stream
+
+  Args:
+    conn - Connection created with `connect`
+
+  Options:
+    :on-error - Callback for error messages (fn [{:keys [message code]}])
+    :on-close - Callback when connection closes (fn [status])
+    :on-ack   - Callback for ack messages (fn [{:keys [action subscription-ids]}])
+
+  Returns:
+    DeltaStream that can be used with stream-subscribe!, stream-unsubscribe!, etc.
+
+  Example:
+    (def stream (dfdb/stream-connect conn
+                  :on-error (fn [e] (println \"Error:\" (:message e)))))"
+  [conn & {:keys [on-error on-close on-ack]}]
+  (ws/connect conn :on-error on-error :on-close on-close :on-ack on-ack))
+
+(defn stream-subscribe!
+  "Subscribe to delta updates for subscriptions via WebSocket
+
+  Args:
+    stream - DeltaStream from `stream-connect`
+    subscription-ids - Subscription ID or vector of IDs
+    callback - Function called when deltas arrive
+               (fn [{:keys [subscription-id additions retractions timestamp]}])
+
+  Example:
+    (dfdb/stream-subscribe! stream [(:id sub)]
+      (fn [{:keys [additions retractions]}]
+        (println \"Added:\" (count additions) \"Removed:\" (count retractions))))"
+  [stream subscription-ids callback]
+  (ws/subscribe-deltas! stream subscription-ids callback))
+
+(defn stream-unsubscribe!
+  "Unsubscribe from delta updates
+
+  Args:
+    stream - DeltaStream from `stream-connect`
+    subscription-ids - Subscription ID or vector of IDs
+
+  Example:
+    (dfdb/stream-unsubscribe! stream [(:id sub)])"
+  [stream subscription-ids]
+  (ws/unsubscribe-deltas! stream subscription-ids))
+
+(defn stream-close!
+  "Close the WebSocket stream connection
+
+  Args:
+    stream - DeltaStream from `stream-connect`
+
+  Example:
+    (dfdb/stream-close! stream)"
+  [stream]
+  (ws/close! stream))
+
+(defn stream-connected?
+  "Check if the WebSocket stream is connected
+
+  Args:
+    stream - DeltaStream from `stream-connect`
+
+  Returns:
+    true if connected, false otherwise"
+  [stream]
+  (ws/connected? stream))

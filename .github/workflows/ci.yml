@@ -9,6 +9,18 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    services:
+      dfdb:
+        image: ghcr.io/kipz/dfdb-go:latest
+        ports:
+          - 8081:8080
+        options: >-
+          --health-cmd "wget -q --spider http://localhost:8080/api/health || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +38,18 @@ jobs:
             ~/.clojure/.cpcache
           key: ${{ runner.os }}-clj-${{ hashFiles('deps.edn') }}
           restore-keys: ${{ runner.os }}-clj-
+
+      - name: Wait for dfdb server
+        run: |
+          echo "Waiting for dfdb server to be ready..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8081/api/health > /dev/null; then
+              echo "dfdb server is ready!"
+              break
+            fi
+            echo "Attempt $i: waiting..."
+            sleep 2
+          done
 
       - name: Run tests
         run: clj -M:test

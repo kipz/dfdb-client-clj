@@ -148,6 +148,48 @@ Subscriptions allow you to create materialized views that are automatically upda
 (dfdb/delete-subscription conn "sub-123")
 ```
 
+#### Streaming deltas via WebSocket
+
+Subscribe to real-time delta updates when materialized views change.
+
+```clojure
+;; Connect to the WebSocket stream
+(def stream (dfdb/stream-connect conn
+              :on-error (fn [{:keys [message code]}]
+                          (println "Error:" message))
+              :on-close (fn [status]
+                          (println "Connection closed:" status))))
+
+;; Subscribe to delta updates for a subscription
+(dfdb/stream-subscribe! stream [(:id sub)]
+  (fn [{:keys [subscription-id additions retractions timestamp]}]
+    (println "Subscription:" subscription-id)
+    (println "Added:" (count additions) "rows")
+    (println "Removed:" (count retractions) "rows")))
+
+;; Unsubscribe from delta updates
+(dfdb/stream-unsubscribe! stream [(:id sub)])
+
+;; Check connection status
+(dfdb/stream-connected? stream)
+;; => true
+
+;; Close the WebSocket connection
+(dfdb/stream-close! stream)
+```
+
+You can also use the `dfdb.client.websocket` namespace directly for more control:
+
+```clojure
+(require '[dfdb.client.websocket :as ws])
+
+(def stream (ws/connect conn))
+(ws/subscribe-deltas! stream ["sub-123"] callback-fn)
+(ws/subscribed-ids stream)  ;; => #{"sub-123"}
+(ws/unsubscribe-deltas! stream ["sub-123"])
+(ws/close! stream)
+```
+
 ## Development
 
 Run tests (requires dfdb-go server running on localhost:8081):
