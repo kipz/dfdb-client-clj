@@ -71,11 +71,81 @@ io.github.kipz/dfdb-client-clj {:git/url "https://github.com/kipz/dfdb-client-cl
   :as-of {:time/system 1000})
 ```
 
+### Helper functions
+
+```clojure
+;; Get entity by ID
+(dfdb/entity conn 1)
+;; => {:db/id 1, :user/name "Alice", :user/age 30}
+
+;; Pull specific attributes
+(dfdb/pull conn [:user/name :user/age] 1)
+;; => {:user/name "Alice", :user/age 30}
+```
+
 ### Health check
 
 ```clojure
 (dfdb/health conn)
 ;; => {:status "ok", :time 1234567890}
+```
+
+### Subscriptions (Materialized Views)
+
+Subscriptions allow you to create materialized views that are automatically updated when underlying data changes.
+
+#### Creating a subscription
+
+```clojure
+(def sub (dfdb/create-subscription conn "active-users"
+           '[:find ?e ?name ?age
+             :where [?e :user/name ?name]
+                    [?e :user/age ?age]]))
+;; => {:id "sub-123" :name "active-users" :active true ...}
+```
+
+#### Querying a materialized view
+
+```clojure
+;; Get all results
+(dfdb/query-view conn (:id sub))
+;; => {:results [{:?e 1 :?name "Alice" :?age 30} ...] :total 10}
+
+;; With pagination
+(dfdb/query-view conn (:id sub) :limit 10 :offset 0)
+
+;; With filtering
+(dfdb/query-view conn (:id sub)
+  :filter {"?age" {">" 25}})
+
+;; With sorting (prefix with - for descending)
+(dfdb/query-view conn (:id sub)
+  :sort ["-?age" "?name"])
+
+;; Combined options
+(dfdb/query-view conn (:id sub)
+  :filter {"?age" {">=" 21}}
+  :sort ["-?age"]
+  :limit 20
+  :offset 0)
+```
+
+#### Managing subscriptions
+
+```clojure
+;; List all subscriptions
+(dfdb/list-subscriptions conn)
+;; => {:subscriptions [{:id "sub-123" :name "active-users" ...}]}
+
+;; Get a subscription by ID
+(dfdb/get-subscription conn "sub-123")
+
+;; Update a subscription's query
+(dfdb/update-subscription conn "sub-123"
+  '[:find ?e ?name :where [?e :user/name ?name]])
+
+;; Delete a subscription
+(dfdb/delete-subscription conn "sub-123")
 ```
 
 ## Development
