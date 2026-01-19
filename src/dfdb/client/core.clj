@@ -210,3 +210,181 @@
                       :params {"?id" entity-id}
                       :as-of as-of)]
     (-> result :bindings first first)))
+
+;; Subscription API - Materialized Views
+
+(defn create-subscription
+  "Create a subscription with a materialized view
+
+  Args:
+    conn - Connection created with `connect`
+    name - Human-readable name for the subscription
+    query - Datalog query that defines the materialized view
+
+  Returns:
+    Map with subscription details including :id
+
+  Example:
+    (create-subscription conn \"active-users\"
+      '[:find ?e ?name :where [?e :user/active true] [?e :user/name ?name]])"
+  [conn name query]
+  (let [url (str (:base-url conn) "/api/subscriptions")
+        request-body {:name name
+                      :query (format-query query)}
+        response (http/post url
+                            request-body
+                            :timeout (:timeout conn)
+                            :max-retries (:max-retries conn))]
+    (if (:success response)
+      (:body response)
+      (throw (ex-info (str "Create subscription failed: " (:error response))
+                      {:response response})))))
+
+(defn list-subscriptions
+  "List all subscriptions
+
+  Args:
+    conn - Connection created with `connect`
+
+  Returns:
+    Map with :subscriptions vector of subscription metadata
+
+  Example:
+    (list-subscriptions conn)
+    ;; => {:subscriptions [{:id \"sub-1\" :name \"active-users\" ...}]}"
+  [conn]
+  (let [url (str (:base-url conn) "/api/subscriptions")
+        response (http/get-request url
+                                   :timeout (:timeout conn)
+                                   :max-retries (:max-retries conn))]
+    (if (:success response)
+      (:body response)
+      (throw (ex-info (str "List subscriptions failed: " (:error response))
+                      {:response response})))))
+
+(defn get-subscription
+  "Get a subscription by ID
+
+  Args:
+    conn - Connection created with `connect`
+    id - Subscription ID
+
+  Returns:
+    Subscription metadata map
+
+  Example:
+    (get-subscription conn \"sub-123\")"
+  [conn id]
+  (let [url (str (:base-url conn) "/api/subscriptions/" id)
+        response (http/get-request url
+                                   :timeout (:timeout conn)
+                                   :max-retries (:max-retries conn))]
+    (if (:success response)
+      (:body response)
+      (throw (ex-info (str "Get subscription failed: " (:error response))
+                      {:response response})))))
+
+(defn update-subscription
+  "Update a subscription's query
+
+  Args:
+    conn - Connection created with `connect`
+    id - Subscription ID
+    query - New Datalog query
+
+  Returns:
+    Updated subscription metadata
+
+  Example:
+    (update-subscription conn \"sub-123\"
+      '[:find ?e :where [?e :user/active false]])"
+  [conn id query]
+  (let [url (str (:base-url conn) "/api/subscriptions/" id)
+        request-body {:query (format-query query)}
+        response (http/put url
+                           request-body
+                           :timeout (:timeout conn)
+                           :max-retries (:max-retries conn))]
+    (if (:success response)
+      (:body response)
+      (throw (ex-info (str "Update subscription failed: " (:error response))
+                      {:response response})))))
+
+(defn delete-subscription
+  "Delete a subscription
+
+  Args:
+    conn - Connection created with `connect`
+    id - Subscription ID
+
+  Returns:
+    nil on success
+
+  Example:
+    (delete-subscription conn \"sub-123\")"
+  [conn id]
+  (let [url (str (:base-url conn) "/api/subscriptions/" id)
+        response (http/delete url
+                              :timeout (:timeout conn)
+                              :max-retries (:max-retries conn))]
+    (if (:success response)
+      nil
+      (throw (ex-info (str "Delete subscription failed: " (:error response))
+                      {:response response})))))
+
+(defn query-view
+  "Query a subscription's materialized view
+
+  Args:
+    conn - Connection created with `connect`
+    subscription-id - ID of the subscription
+
+  Options:
+    :filter - Map of variable to filter criteria
+              e.g., {\"?age\" {\">\" 30}} or {\"?name\" \"Alice\"}
+    :sort   - Vector of sort fields, prefix with - for descending
+              e.g., [\"?age\"] or [\"-?age\" \"?name\"]
+    :limit  - Maximum number of results
+    :offset - Number of results to skip
+
+  Returns:
+    Map with :results (vector of bindings) and :total (total count)
+
+  Examples:
+    ;; Get all results
+    (query-view conn \"sub-123\")
+
+    ;; With pagination
+    (query-view conn \"sub-123\" :limit 10 :offset 0)
+
+    ;; With filter and sort
+    (query-view conn \"sub-123\"
+      :filter {\"?age\" {\">\" 30}}
+      :sort [\"-?age\"]
+      :limit 20)"
+  [conn subscription-id & {:keys [filter sort limit offset]}]
+  (let [url (str (:base-url conn) "/api/subscriptions/" subscription-id "/view")
+        has-opts? (or filter sort limit offset)]
+    (if has-opts?
+      ;; POST with options
+      (let [request-body (cond-> {}
+                           filter (assoc :filter filter)
+                           sort (assoc :sort sort)
+                           limit (assoc :limit limit)
+                           offset (assoc :offset offset))
+            response (http/post url
+                                request-body
+                                :timeout (:timeout conn)
+                                :max-retries (:max-retries conn))]
+        (if (:success response)
+          (:body response)
+          (throw (ex-info (str "Query view failed: " (:error response))
+                          {:response response}))))
+      ;; GET without options
+      (let [response (http/get-request url
+                                       :timeout (:timeout conn)
+                                       :max-retries (:max-retries conn))]
+        (if (:success response)
+          (:body response)
+          (throw (ex-info (str "Query view failed: " (:error response))
+                          {:response response})))))))

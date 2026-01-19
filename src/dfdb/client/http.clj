@@ -49,12 +49,14 @@
 (defn- transit-decode
   "Decode Transit JSON to Clojure data"
   [^String json-str]
-  (let [in (ByteArrayInputStream. (.getBytes json-str "UTF-8"))
-        data (transit/read (transit/reader in :json))]
-    ;; Post-process to convert temp-id-map keys if present
-    (if (map? data)
-      (convert-temp-id-map data)
-      data)))
+  ;; Handle empty responses (e.g., from DELETE)
+  (when (and json-str (pos? (count json-str)))
+    (let [in (ByteArrayInputStream. (.getBytes json-str "UTF-8"))
+          data (transit/read (transit/reader in :json))]
+      ;; Post-process to convert temp-id-map keys if present
+      (if (map? data)
+        (convert-temp-id-map data)
+        data))))
 
 (defn- should-retry?
   "Determine if a request should be retried based on status code"
@@ -132,6 +134,25 @@
   [url & {:keys [max-retries timeout]
           :or {max-retries 3 timeout 30000}}]
   (request {:method :get
+            :url url
+            :max-retries max-retries
+            :timeout timeout}))
+
+(defn put
+  "Make a PUT request with Transit JSON encoding"
+  [url body & {:keys [max-retries timeout]
+               :or {max-retries 3 timeout 30000}}]
+  (request {:method :put
+            :url url
+            :body body
+            :max-retries max-retries
+            :timeout timeout}))
+
+(defn delete
+  "Make a DELETE request"
+  [url & {:keys [max-retries timeout]
+          :or {max-retries 3 timeout 30000}}]
+  (request {:method :delete
             :url url
             :max-retries max-retries
             :timeout timeout}))
