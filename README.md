@@ -1,6 +1,8 @@
 # dfdb-client-clj
 
-Clojure client library for dfdb-go remote API.
+[![CI](https://github.com/kipz/dfdb-client-clj/actions/workflows/ci.yml/badge.svg)](https://github.com/kipz/dfdb-client-clj/actions/workflows/ci.yml)
+
+Clojure client library for [dfdb-go](https://github.com/kipz/dfdb-go) remote API.
 
 ## Installation
 
