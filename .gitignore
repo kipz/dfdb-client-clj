@@ -1,0 +1,28 @@
+# Clojure
+.cpcache/
+.clj-kondo/
+.lsp/
+classes/
+target/
+*.jar
+
+# IDE
+.idea/
+*.iml
+.nrepl-port
+.nrepl-history
+.cider-repl-history
+
+# Editor
+*~
+\#*\#
+.#*
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
