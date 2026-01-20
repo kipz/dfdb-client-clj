@@ -52,4 +52,4 @@ jobs:
           done
 
       - name: Run tests
-        run: clj -M:test
+        run: clojure -M:test
