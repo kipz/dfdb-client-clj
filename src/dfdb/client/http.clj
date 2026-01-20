@@ -1,9 +1,10 @@
 (ns dfdb.client.http
-  "HTTP client with retry logic for dfdb-go server"
-  (:require [org.httpkit.client :as http]
+  "HTTP/2 client with retry logic for dfdb-go server"
+  (:require [hato.client :as hc]
             [cognitect.transit :as transit]
             [cheshire.core :as json])
-  (:import [java.io ByteArrayInputStream ByteArrayOutputStream]))
+  (:import [java.io ByteArrayInputStream ByteArrayOutputStream]
+           [java.net.http HttpClient$Version]))
 
 (defn- transit-encode
   "Encode Clojure data to Transit JSON"
@@ -69,8 +70,13 @@
   [attempt]
   (long (* 1000 (Math/pow 2 attempt))))
 
+;; Create a shared HTTP/2 client
+(defonce ^:private http2-client
+  (hc/build-http-client {:version :http-2
+                         :connect-timeout 10000}))
+
 (defn request
-  "Make an HTTP request with retry logic
+  "Make an HTTP/2 request with retry logic
 
   Options:
     :method - HTTP method (:get, :post, etc.)
@@ -82,23 +88,29 @@
     :or {max-retries 3 timeout 30000}}]
   (loop [attempt 0]
     (let [encoded-body (when body (transit-encode body))
-          opts {:method method
+          opts {:http-client http2-client
+                :request-method method
                 :url url
                 :headers {"Content-Type" "application/transit+json"
                           "Accept" "application/transit+json"}
                 :body encoded-body
-                :timeout timeout}
-          {:keys [status body error] :as response} @(http/request opts)]
+                :timeout timeout
+                :as :string}
+          {:keys [status body] :as response}
+          (try
+            (hc/request opts)
+            (catch Exception e
+              {:status 0 :error (ex-message e)}))]
 
       (cond
         ;; Success
-        (and (not error) (< status 400))
+        (and (nil? (:error response)) (< status 400))
         {:success true
          :status status
          :body (when body (transit-decode body))}
 
         ;; Error that should be retried
-        (and (or error (should-retry? status))
+        (and (or (:error response) (should-retry? status))
              (< attempt max-retries))
         (do
           (Thread/sleep (exponential-backoff attempt))
@@ -117,7 +129,7 @@
                        (json/parse-string body true)
                        (catch Exception _
                          body)))))
-         :error (or error (str "HTTP " status))}))))
+         :error (or (:error response) (str "HTTP " status))}))))
 
 (defn post
   "Make a POST request with Transit JSON encoding"
