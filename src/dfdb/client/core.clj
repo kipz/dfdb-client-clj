@@ -32,6 +32,96 @@
     query
     (pr-str query)))
 
+(defn- parse-query
+  "Parse a query to extract its structure.
+  Returns the query as a vector (parsing string queries if needed)"
+  [query]
+  (cond
+    (vector? query) query
+    (string? query) (try
+                      (read-string query)
+                      (catch Exception _
+                        ;; If parsing fails, return nil (caller will handle)
+                        nil))
+    :else nil))
+
+(defn- extract-in-clause
+  "Extract the :in clause from a parsed query vector.
+  Returns a vector of input bindings, or nil if no :in clause"
+  [parsed-query]
+  (when (vector? parsed-query)
+    (let [in-idx (.indexOf parsed-query :in)]
+      (when (>= in-idx 0)
+        (let [where-idx (.indexOf parsed-query :where)
+              end-idx (if (>= where-idx 0) where-idx (count parsed-query))]
+          (vec (subvec parsed-query (inc in-idx) end-idx)))))))
+
+(defn- collection-binding?
+  "Check if a binding is a collection binding: [?var ...]"
+  [binding]
+  (and (vector? binding)
+       (>= (count binding) 2)
+       (= '... (last binding))))
+
+(defn- tuple-binding?
+  "Check if a binding is a tuple binding: [?var1 ?var2 ...]"
+  [binding]
+  (and (vector? binding)
+       (not= '... (last binding))
+       (> (count binding) 1)))
+
+(defn- relation-binding?
+  "Check if a binding is a relation binding: [[?var1 ?var2 ...]]"
+  [binding]
+  (and (vector? binding)
+       (= 1 (count binding))
+       (vector? (first binding))))
+
+(defn- non-scalar-binding?
+  "Check if a binding is non-scalar (collection, tuple, or relation)"
+  [binding]
+  (or (collection-binding? binding)
+      (tuple-binding? binding)
+      (relation-binding? binding)))
+
+(defn- binding-param-key
+  "Get the parameter key for a binding.
+  For scalars: '?var' -> '?var'
+  For collections: '[?var ...]' -> '[?var ...]'"
+  [binding]
+  (cond
+    (symbol? binding) (str binding)
+    (vector? binding) (pr-str binding)
+    :else (str binding)))
+
+(defn- convert-params-to-positional
+  "Convert named params map to positional array for non-scalar bindings.
+  Returns params in the order specified by the :in clause"
+  [params in-clause]
+  (when (and params in-clause (map? params))
+    ;; Skip $ (database) which is always first in :in clause
+    (let [bindings (if (= '$ (first in-clause))
+                     (rest in-clause)
+                     in-clause)]
+      (mapv (fn [binding]
+              (let [key (binding-param-key binding)]
+                (get params key)))
+            bindings))))
+
+(defn- should-use-positional-params?
+  "Check if params should be converted to positional array.
+  Returns true if query has non-scalar bindings and params is a map"
+  [query params]
+  (when (and (map? params) (not-empty params))
+    (let [parsed (parse-query query)
+          in-clause (extract-in-clause parsed)]
+      (when in-clause
+        ;; Check if any binding (except $) is non-scalar
+        (let [bindings (if (= '$ (first in-clause))
+                         (rest in-clause)
+                         in-clause)]
+          (some non-scalar-binding? bindings))))))
+
 (defn transact!
   "Execute a transaction on the server
 
@@ -86,6 +176,8 @@
   Options:
     :params - Map of parameter bindings (e.g., {\"?age\" 30})
     :as-of - Map of time dimension names to timestamps
+    :limit - Maximum number of results to return
+    :offset - Number of results to skip
 
   Returns:
     Map with keys:
@@ -123,11 +215,19 @@
     (query conn
       '[:find ?name :where [?e :user/name ?name]]
       :as-of {:time/system 1000})"
-  [conn query & {:keys [params as-of]}]
+  [conn query & {:keys [params as-of limit offset]}]
   (let [url (str (:base-url conn) "/api/query")
+        ;; Convert params to positional array if query has non-scalar bindings
+        converted-params (if (should-use-positional-params? query params)
+                           (let [parsed (parse-query query)
+                                 in-clause (extract-in-clause parsed)]
+                             (convert-params-to-positional params in-clause))
+                           params)
         request-body (cond-> {:query (format-query query)}
-                       params (assoc :params params)
-                       as-of (assoc :as-of as-of))
+                       converted-params (assoc :params converted-params)
+                       as-of (assoc :as-of as-of)
+                       limit (assoc :limit limit)
+                       offset (assoc :offset offset))
         response (http/post url
                             request-body
                             :timeout (:timeout conn)
@@ -159,6 +259,66 @@
     (if (:success response)
       (:body response)
       (throw (ex-info (str "Health check failed: " (:error response))
+                      {:response response})))))
+
+(defn define-schema
+  "Define schema attributes on the server
+
+  This enables unique identity constraints for upsert behavior,
+  cardinality-many attributes, component relationships, and other
+  schema features.
+
+  Args:
+    conn - Connection created with `connect`
+    schema - EDN schema definition (string or vector)
+
+  Returns:
+    Map with keys:
+      :status - \"ok\" on success
+      :count - Number of attributes defined
+
+  Examples:
+    ;; Define unique identity for upsert
+    (define-schema conn
+      \"[{:db/ident :image/digest
+         :db/valueType :db.type/string
+         :db/cardinality :db.cardinality/one
+         :db/unique :db.unique/identity}]\")
+
+    ;; Define multiple attributes
+    (define-schema conn
+      [{:db/ident :package/purl
+        :db/valueType :db.type/string
+        :db/cardinality :db.cardinality/one
+        :db/unique :db.unique/identity}
+       {:db/ident :package/tags
+        :db/valueType :db.type/string
+        :db/cardinality :db.cardinality/many}])
+
+  Schema attribute options:
+    :db/ident       - Attribute name (required)
+    :db/valueType   - :db.type/string, :db.type/long, :db.type/boolean,
+                      :db.type/float, :db.type/double, :db.type/ref,
+                      :db.type/instant, :db.type/uuid, :db.type/bytes
+    :db/cardinality - :db.cardinality/one (default) or :db.cardinality/many
+    :db/unique      - :db.unique/identity (enables upsert) or :db.unique/value
+    :db/index       - true to create dedicated index
+    :db/fulltext    - true to enable fulltext search (strings only)
+    :db/isComponent - true for component entities (cascade delete)
+    :db/doc         - Documentation string"
+  [conn schema]
+  (let [url (str (:base-url conn) "/api/schema")
+        schema-str (if (string? schema)
+                     schema
+                     (pr-str schema))
+        request-body {:schema schema-str}
+        response (http/post url
+                            request-body
+                            :timeout (:timeout conn)
+                            :max-retries (:max-retries conn))]
+    (if (:success response)
+      (:body response)
+      (throw (ex-info (str "Define schema failed: " (:error response))
                       {:response response})))))
 
 ;; Helper functions for common operations

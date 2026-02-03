@@ -38,6 +38,56 @@
         (is (= "ok" (:status result)))
         (is (number? (:time result)))))))
 
+(deftest test-define-schema
+  (when (server-running?)
+    (testing "Define schema with unique identity enables upsert"
+      (let [conn (dfdb/connect :base-url test-server-url)]
+        ;; Define schema with unique identity
+        (let [result (dfdb/define-schema conn
+                       "[{:db/ident :test-image/digest
+                          :db/valueType :db.type/string
+                          :db/cardinality :db.cardinality/one
+                          :db/unique :db.unique/identity}]")]
+          (is (= "ok" (:status result)))
+          (is (number? (:count result))))
+
+        ;; Transact first entity
+        (dfdb/transact! conn [{:test-image/digest "sha256:abc123"
+                               :test-image/name "foo"}])
+
+        ;; Transact with same digest - should upsert (update), not create new
+        (dfdb/transact! conn [{:test-image/digest "sha256:abc123"
+                               :test-image/name "bar"}])
+
+        ;; Query - should only have 1 entity with this digest
+        (let [result (dfdb/query conn
+                                 '[:find ?e ?name
+                                   :where
+                                   [?e :test-image/digest "sha256:abc123"]
+                                   [?e :test-image/name ?name]])]
+          (is (= 1 (count (:bindings result))))
+          (is (= "bar" (-> result :bindings first :?name))))))))
+
+(deftest test-define-schema-multiple-attributes
+  (when (server-running?)
+    (testing "Define multiple schema attributes"
+      (let [conn (dfdb/connect :base-url test-server-url)
+            ;; Use string format to ensure proper EDN serialization
+            ;; (Clojure pr-str uses namespace shorthand #:db{...} which Go doesn't parse)
+            result (dfdb/define-schema conn
+                     "[{:db/ident :test-pkg/purl
+                        :db/valueType :db.type/string
+                        :db/cardinality :db.cardinality/one
+                        :db/unique :db.unique/identity}
+                       {:db/ident :test-pkg/version
+                        :db/valueType :db.type/string
+                        :db/cardinality :db.cardinality/one}
+                       {:db/ident :test-pkg/tags
+                        :db/valueType :db.type/string
+                        :db/cardinality :db.cardinality/many}]")]
+        (is (= "ok" (:status result)))
+        (is (= 3 (:count result)))))))
+
 (deftest test-transaction-map-notation
   (when (server-running?)
     (testing "Transaction with map notation"
