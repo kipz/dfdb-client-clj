@@ -97,7 +97,7 @@
             (is (= "subscribed" (:action (first @acks))) "Ack should confirm subscription"))
 
           ;; Transact new data - should trigger delta
-          (dfdb/transact! conn [{:db/id -1 name-attr "WebSocketUser"}])
+          (dfdb/transact! conn [{:db/id "temp-1" name-attr "WebSocketUser"}])
 
           ;; Wait for delta to arrive
           (Thread/sleep 500)

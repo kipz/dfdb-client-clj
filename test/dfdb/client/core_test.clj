@@ -237,11 +237,13 @@
   (when (server-running?)
     (testing "Temporary ID resolution"
       (let [conn (dfdb/connect :base-url test-server-url)
-            ;; Use negative ID as temp ID
-            result (dfdb/transact! conn [{:db/id -1
+            ;; Use string as temp ID (negative integers are no longer valid temp-IDs)
+            result (dfdb/transact! conn [{:db/id "kelly-temp"
                                           :user/name "Kelly"
                                           :user/age 27}])]
         (is (map? (:temp-id-map result)))
+        ;; Temp ID map should contain the string temp-ID mapped to a positive integer
+        (is (number? (get (:temp-id-map result) "kelly-temp")))
         (is (number? (:tx-id result)))))))
 
 (deftest test-get-all-entity-attributes

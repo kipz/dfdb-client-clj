@@ -262,15 +262,20 @@
   (when (server-running?)
     (testing "Temp IDs with references between entities"
       (let [conn (dfdb/connect :base-url test-server-url)]
-        ;; Create entities with references using temp IDs
-        (let [result (dfdb/transact! conn
-                                     [{:db/id -1 :user/name "TempUser"}
-                                      {:db/id -2
-                                       :post/title "TempPost"
-                                       :post/author -1}])]
-          (is (map? (:temp-id-map result)))
-          (is (contains? (:temp-id-map result) -1))
-          (is (contains? (:temp-id-map result) -2)))))))
+        ;; Create user first with string temp ID
+        (let [user-result (dfdb/transact! conn
+                                          [{:db/id "temp-user" :user/name "TempUser"}])
+              ;; Get resolved user ID from temp-id-map
+              user-id (get (:temp-id-map user-result) "temp-user")]
+          (is (map? (:temp-id-map user-result)))
+          (is (number? user-id))
+          ;; Create post referencing the resolved user ID
+          (let [post-result (dfdb/transact! conn
+                                            [{:db/id "temp-post"
+                                              :post/title "TempPost"
+                                              :post/author user-id}])]
+            (is (map? (:temp-id-map post-result)))
+            (is (contains? (:temp-id-map post-result) "temp-post"))))))))
 
 (deftest test-lookup-refs
   (when (server-running?)

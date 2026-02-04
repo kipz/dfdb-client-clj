@@ -135,8 +135,8 @@
             _ (is (= 0 (count (:results initial-result))) "Should start with no results")
             ;; Add test data AFTER subscription exists
             _ (dfdb/transact! conn
-                              [{:db/id -1 name-attr "Gizmo1" price-attr 100}
-                               {:db/id -2 name-attr "Gizmo2" price-attr 200}])
+                              [{:db/id "temp-1" name-attr "Gizmo1" price-attr 100}
+                               {:db/id "temp-2" name-attr "Gizmo2" price-attr 200}])
             ;; Query the view - should see newly added data
             result (dfdb/query-view conn (:id sub))]
         (is (some? (:results result)) "Should have results")

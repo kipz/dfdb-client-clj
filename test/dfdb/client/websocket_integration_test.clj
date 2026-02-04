@@ -95,11 +95,11 @@
               ;; Step 3: Transact initial data - should trigger delta
               (reset! received-deltas [])
 
-              (dfdb/transact! conn [{:db/id -1
+              (dfdb/transact! conn [{:db/id "temp-1"
                                      name-attr "Alice"
                                      email-attr "alice@example.com"
                                      status-attr "active"}
-                                    {:db/id -2
+                                    {:db/id "temp-2"
                                      name-attr "Bob"
                                      email-attr "bob@example.com"
                                      status-attr "active"}])
@@ -176,7 +176,7 @@
               ;; Step 8: Add more data and verify delta streaming continues
               (reset! received-deltas [])
 
-              (dfdb/transact! conn [{:db/id -3
+              (dfdb/transact! conn [{:db/id "temp-3"
                                      name-attr "Charlie"
                                      email-attr "charlie@example.com"
                                      status-attr "pending"}])
@@ -203,7 +203,7 @@
 
               ;; Transact more data - should NOT receive delta
               (reset! received-deltas [])
-              (dfdb/transact! conn [{:db/id -4
+              (dfdb/transact! conn [{:db/id "temp-4"
                                      name-attr "Diana"
                                      email-attr "diana@example.com"
                                      status-attr "active"}])
@@ -266,7 +266,7 @@
                   "Should be subscribed to both")
 
               ;; Transact data for first subscription only
-              (dfdb/transact! conn [{:db/id -1 attr1 "value1"}])
+              (dfdb/transact! conn [{:db/id "temp-1" attr1 "value1"}])
               (Thread/sleep 500)
 
               (is (pos? (count @deltas-sub1)) "Sub1 should receive delta")
@@ -274,7 +274,7 @@
 
               ;; Transact data for second subscription only
               (reset! deltas-sub1 [])
-              (dfdb/transact! conn [{:db/id -2 attr2 "value2"}])
+              (dfdb/transact! conn [{:db/id "temp-2" attr2 "value2"}])
               (Thread/sleep 500)
 
               (is (zero? (count @deltas-sub1)) "Sub1 should NOT receive delta for sub2 data")
@@ -283,8 +283,8 @@
               ;; Transact data for both
               (reset! deltas-sub1 [])
               (reset! deltas-sub2 [])
-              (dfdb/transact! conn [{:db/id -3 attr1 "value3"}
-                                    {:db/id -4 attr2 "value4"}])
+              (dfdb/transact! conn [{:db/id "temp-3" attr1 "value3"}
+                                    {:db/id "temp-4" attr2 "value4"}])
               (Thread/sleep 500)
 
               (is (pos? (count @deltas-sub1)) "Sub1 should receive delta")
@@ -322,7 +322,7 @@
             (Thread/sleep 200)
 
             ;; Transact and verify
-            (dfdb/transact! conn [{:db/id -1 value-attr "first"}])
+            (dfdb/transact! conn [{:db/id "temp-1" value-attr "first"}])
             (Thread/sleep 500)
             (is (pos? (count @deltas)) "Should receive delta on first connection")
 
@@ -341,7 +341,7 @@
             (Thread/sleep 200)
 
             ;; Transact and verify deltas work on new connection
-            (dfdb/transact! conn [{:db/id -2 value-attr "second"}])
+            (dfdb/transact! conn [{:db/id "temp-2" value-attr "second"}])
             (Thread/sleep 500)
             (is (pos? (count @deltas)) "Should receive delta on reconnected stream")
 
@@ -437,7 +437,7 @@
                 (is (pos? (count @acks)) "Should receive ack after error recovery")
 
                 ;; Transact and verify stream still works
-                (dfdb/transact! conn [{:db/id -1 value-attr "recovered"}])
+                (dfdb/transact! conn [{:db/id "temp-1" value-attr "recovered"}])
                 (Thread/sleep 500)
 
                 (is (pos? (count @deltas)) "Should receive deltas after error recovery")
@@ -479,7 +479,7 @@
               (Thread/sleep 200)
 
               ;; Initial insert
-              (dfdb/transact! conn [{:db/id -1 name-attr "Counter" count-attr 0}])
+              (dfdb/transact! conn [{:db/id "temp-1" name-attr "Counter" count-attr 0}])
               (Thread/sleep 500)
 
               ;; Get entity ID

@@ -13,15 +13,8 @@
     (transit/write (transit/writer out :json) data)
     (.toString out "UTF-8")))
 
-(defn- parse-int-key
-  "Parse a string key to integer if it looks like a number"
-  [s]
-  (try
-    (Long/parseLong s)
-    (catch Exception _ s)))
-
 (defn- convert-temp-id-map
-  "Convert temp-id-map string keys to integers"
+  "Normalize temp-id-map keys to strings (temp-IDs are now strings, not integers)"
   [response]
   (if-let [temp-id-map (:temp-id-map response)]
     (try
@@ -35,11 +28,12 @@
                               (catch Exception _
                                ;; Fallback: it's likely empty or invalid
                                 {})))]
+        ;; Keys are now strings (temp-IDs), values are resolved integer entity IDs
         (assoc response :temp-id-map
                (into {} (map (fn [[k v]]
                                [(if (keyword? k)
-                                  (parse-int-key (name k))
-                                  (parse-int-key (str k)))
+                                  (name k)
+                                  (str k))
                                 v])
                              converted-map))))
       (catch Exception e
@@ -70,10 +64,9 @@
   [attempt]
   (long (* 1000 (Math/pow 2 attempt))))
 
-;; Create a shared HTTP/2 client
-(defonce ^:private http2-client
-  (hc/build-http-client {:version :http-2
-                         :connect-timeout 10000}))
+;; Create a shared HTTP client (HTTP/1.1 - dfdb doesn't support HTTP/2)
+(defonce ^:private http-client
+  (hc/build-http-client {:connect-timeout 10000}))
 
 (defn request
   "Make an HTTP/2 request with retry logic
@@ -87,8 +80,15 @@
   [{:keys [method url body max-retries timeout]
     :or {max-retries 3 timeout 30000}}]
   (loop [attempt 0]
-    (let [encoded-body (when body (transit-encode body))
-          opts {:http-client http2-client
+    (let [encoded-body (when body
+                         (try
+                           (transit-encode body)
+                           (catch Exception e
+                             (println "[TRANSIT ENCODE ERROR]" (ex-message e))
+                             (println "[TRANSIT ENCODE ERROR] Body type:" (type body))
+                             (println "[TRANSIT ENCODE ERROR] Body sample:" (pr-str (take 2 body)))
+                             (throw e))))
+          opts {:http-client http-client
                 :request-method method
                 :url url
                 :headers {"Content-Type" "application/transit+json"
@@ -96,11 +96,15 @@
                 :body encoded-body
                 :timeout timeout
                 :as :string}
+          _ (println "[HTTP] Attempting request to" url "with body length" (count encoded-body))
           {:keys [status body] :as response}
           (try
             (hc/request opts)
             (catch Exception e
+              (println "[HTTP ERROR]" (ex-message e))
+              (println "[HTTP ERROR] Exception type:" (type e))
               {:status 0 :error (ex-message e)}))]
+      (println "[HTTP] Got response status:" status)
 
       (cond
         ;; Success
