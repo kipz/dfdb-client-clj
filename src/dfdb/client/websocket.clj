@@ -2,7 +2,9 @@
   "WebSocket client for streaming subscription deltas from dfdb-go"
   (:require [hato.websocket :as hato-ws]
             [cheshire.core :as json]
-            [clojure.string :as str]))
+            [cognitect.transit :as transit]
+            [clojure.string :as str])
+  (:import [java.io ByteArrayInputStream]))
 
 (defrecord DeltaStream [ws-client subscriptions callbacks state])
 
@@ -20,11 +22,20 @@
   (when ws-client
     (hato-ws/send! ws-client (json/generate-string msg))))
 
+(defn- transit-decode
+  "Decode a Transit JSON WebSocket message to Clojure data.
+  The server encodes outgoing WebSocket messages as Transit JSON (matching
+  its HTTP responses), even though it accepts plain JSON for incoming
+  client messages."
+  [^String raw-msg]
+  (let [in (ByteArrayInputStream. (.getBytes raw-msg "UTF-8"))]
+    (transit/read (transit/reader in :json))))
+
 (defn- handle-message
   "Handle incoming WebSocket message"
   [stream raw-msg]
   (try
-    (let [msg (json/parse-string (str raw-msg) true)
+    (let [msg (transit-decode (str raw-msg))
           msg-type (:type msg)]
       (case msg-type
         "delta"

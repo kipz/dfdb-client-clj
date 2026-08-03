@@ -377,7 +377,7 @@
 
               ;; Rapidly transact multiple times
               (doseq [i (range tx-count)]
-                (dfdb/transact! conn [{:db/id (- -100 i) value-attr (str "value-" i)}]))
+                (dfdb/transact! conn [{:db/id (str "highvol-temp-" i) value-attr (str "value-" i)}]))
 
               ;; Wait for all deltas to arrive
               (Thread/sleep 2000)
