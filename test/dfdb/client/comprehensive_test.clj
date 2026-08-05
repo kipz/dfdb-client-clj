@@ -431,11 +431,17 @@
                                      [1400 :person/name ?name]])]
             (is (some #{"NewName"} (map :?name (:bindings result)))))
 
-          ;; Query as-of old time
+          ;; Query as-of the first transaction.
+          ;;
+          ;; By transaction, not by time: a time-based as-of means "the last
+          ;; transaction at or before this instant", and both writes land in the
+          ;; same millisecond often enough that asking by time returns the
+          ;; second one. That is the right answer to the question asked, and the
+          ;; wrong question to ask here.
           (let [result (dfdb/query conn
                                    '[:find ?name
                                      :where [1400 :person/name ?name]]
-                                   :as-of {:time/system (:tx-time tx1)})]
+                                   :as-of {:tx (:tx-id tx1)})]
             (is (>= (count (:bindings result)) 1))
             (is (some #{"OldName"} (map :?name (:bindings result))))))))))
 

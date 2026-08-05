@@ -178,6 +178,7 @@
     :as-of - Map of time dimension names to timestamps
     :limit - Maximum number of results to return
     :offset - Number of results to skip
+    :rules - Rule definitions the query may invoke
 
   Returns:
     Map with keys:
@@ -214,8 +215,14 @@
     ;; With as-of time
     (query conn
       '[:find ?name :where [?e :user/name ?name]]
-      :as-of {:time/system 1000})"
-  [conn query & {:keys [params as-of limit offset]}]
+      :as-of {:time/system 1000})
+
+    ;; With rules
+    (query conn
+      '[:find ?name :where (ancestor 1 ?a) [?a :person/name ?name]]
+      :rules '[[(ancestor ?c ?a) [?c :person/parent ?a]]
+               [(ancestor ?c ?a) [?c :person/parent ?p] (ancestor ?p ?a)]])"
+  [conn query & {:keys [params as-of limit offset rules]}]
   (let [url (str (:base-url conn) "/api/query")
         ;; Convert params to positional array if query has non-scalar bindings
         converted-params (if (should-use-positional-params? query params)
@@ -225,6 +232,7 @@
                            params)
         request-body (cond-> {:query (format-query query)}
                        converted-params (assoc :params converted-params)
+                       rules (assoc :rules (format-query rules))
                        as-of (assoc :as-of as-of)
                        limit (assoc :limit limit)
                        offset (assoc :offset offset))
@@ -621,3 +629,81 @@
     true if connected, false otherwise"
   [stream]
   (ws/connected? stream))
+
+;; Index and entity API
+;;
+;; These reads had no client functions, so asking for the datoms of an
+;; attribute, the entity behind an ident, or the transactions in a range meant
+;; writing a query that approximated it — or, for the transaction log, could not
+;; be done at all.
+
+(defn- post-api
+  "POST to an API path, returning the body or throwing with the server's error."
+  [conn path body]
+  (let [response (http/post (str (:base-url conn) path)
+                            body
+                            :timeout (:timeout conn)
+                            :max-retries (:max-retries conn))]
+    (if (:success response)
+      (:body response)
+      (throw (ex-info (str "Request to " path " failed: " (:error response))
+                      {:response response})))))
+
+(defn datoms
+  "Return datoms from an index, narrowed by leading components.
+
+  The components are the index's own order: entity then attribute then value for
+  :eavt, attribute then entity for :aevt, attribute then value for :avet, value
+  then attribute for :vaet. Fewer components means a wider range.
+
+  Args:
+    conn - Connection
+    index - :eavt, :aevt, :avet or :vaet
+
+  Options:
+    :components - Leading components to narrow by
+    :limit - Maximum datoms to return
+
+  Example:
+    (datoms conn :aevt :components [:user/name])
+    ;; => {:datoms [{:e 1 :a \":user/name\" :v \"Alice\" :tx 1 :added true}]}"
+  [conn index & {:keys [components limit]}]
+  (post-api conn "/api/datoms"
+            (cond-> {:index (name index)}
+              (seq components) (assoc :components (vec components))
+              limit (assoc :limit limit))))
+
+(defn index-range
+  "Return an attribute's datoms whose value lies in [start, end).
+
+  Only meaningful for an attribute carrying an AVET index; without one the
+  server refuses rather than scanning and sorting, which would answer while
+  hiding that the index is missing.
+
+  Example:
+    (index-range conn :user/age :start 25 :end 40)"
+  [conn attribute & {:keys [start end limit]}]
+  (post-api conn "/api/index-range"
+            (cond-> {:attribute (str attribute)}
+              (some? start) (assoc :start start)
+              (some? end) (assoc :end end)
+              limit (assoc :limit limit))))
+
+(defn tx-range
+  "Return the transactions in [start, end), each with its datoms.
+
+  Example:
+    (tx-range conn 0 10)"
+  [conn start end]
+  (post-api conn "/api/tx-range" {:start start :end end}))
+
+(defn entid
+  "Resolve a :db/ident keyword to the entity that carries it."
+  [conn ident]
+  (:entity (post-api conn "/api/entid" {:ident (str ident)})))
+
+(defn attribute
+  "Report what the database knows about an attribute: whether it is indexed,
+  whether its values are references, and how many datoms it has."
+  [conn attr]
+  (post-api conn "/api/attribute" {:attribute (str attr)}))
