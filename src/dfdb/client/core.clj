@@ -331,6 +331,29 @@
 
 ;; Helper functions for common operations
 
+(defn- post-api
+  "POST to an API path, returning the body or throwing with the server's error."
+  [conn path body]
+  (let [response (http/post (str (:base-url conn) path)
+                            body
+                            :timeout (:timeout conn)
+                            :max-retries (:max-retries conn))]
+    (if (:success response)
+      (:body response)
+      (throw (ex-info (str "Request to " path " failed: " (:error response))
+                      {:response response})))))
+
+(defn- basis-request
+  "Add the temporal part of a read to a request body.
+
+  Every read endpoint takes the same three: an as-of map naming a
+  transaction, an instant or a custom dimension; a since bound; and history."
+  [body as-of since history]
+  (cond-> body
+    (seq as-of) (assoc :as-of as-of)
+    since (assoc :since since)
+    history (assoc :history true)))
+
 (defn entity
   "Get all attributes of an entity by ID
 
@@ -339,46 +362,56 @@
     entity-id - Entity ID
 
   Options:
-    :as-of - Map of time dimension names to timestamps
+    :as-of   - Map of time dimension names to bounds
+    :since   - Exclude everything asserted at or before this transaction
+    :history - Show retractions, and every value an attribute has held
 
   Returns:
-    Entity map with all attributes
+    Entity map with all attributes, or an empty map if nothing is written
+    under that ID.
 
   Example:
     (entity conn 1)
     ;; => {:db/id 1, :user/name \"Alice\", :user/age 30}"
-  [conn entity-id & {:keys [as-of]}]
-  (let [result (query conn
-                      '[:find (pull ?e [*]) :in $ ?id :where [?e :db/id ?id]]
-                      :params {"?id" entity-id}
-                      :as-of as-of)]
-    (-> result :bindings first first)))
+  [conn entity-id & {:keys [as-of since history]}]
+  (:entity (post-api conn "/api/entity"
+                     (basis-request {:entity entity-id} as-of since history))))
 
 (defn pull
-  "Execute a pull pattern on an entity
+  "Execute a pull pattern on an entity, or on several
+
+  The pattern is Datomic's: attributes, `*`, nested maps, recursion by `...`
+  or a depth, and attribute expressions such as (:user/name :as :name),
+  (:user/tags :limit 5) and (:user/nick :default \"none\").
 
   Args:
     conn - Connection
-    pattern - Pull pattern (vector of attribute keywords)
-    entity-id - Entity ID
+    pattern - Pull pattern
+    entity-id - Entity ID, or a collection of them
 
   Options:
-    :as-of - Map of time dimension names to timestamps
+    :as-of   - Map of time dimension names to bounds
+    :since   - Exclude everything asserted at or before this transaction
+    :history - Show retractions, and every value an attribute has held
 
   Returns:
-    Entity map with requested attributes
+    One entity map, or — given a collection — one per entity in the order
+    asked.
 
   Example:
     (pull conn [:user/name :user/age] 1)
-    ;; => {:user/name \"Alice\", :user/age 30}"
-  [conn pattern entity-id & {:keys [as-of]}]
-  (let [result (query conn
-                      `[:find (~'pull ~'?e ~pattern)
-                        :in ~'$ ~'?id
-                        :where [~'?e :db/id ~'?id]]
-                      :params {"?id" entity-id}
-                      :as-of as-of)]
-    (-> result :bindings first first)))
+    ;; => {:db/id 1 :user/name \"Alice\", :user/age 30}
+    (pull conn [:user/name] [1 2])
+    ;; => [{:db/id 1 :user/name \"Alice\"} {:db/id 2 :user/name \"Bob\"}]"
+  [conn pattern entity-id & {:keys [as-of since history]}]
+  (let [many? (and (coll? entity-id) (not (map? entity-id)))
+        body (basis-request
+               (if many?
+                 {:entities (vec entity-id) :pattern (vec pattern)}
+                 {:entity entity-id :pattern (vec pattern)})
+               as-of since history)
+        result (post-api conn "/api/pull" body)]
+    (if many? (:results result) (:result result))))
 
 ;; Subscription API - Materialized Views
 
@@ -390,16 +423,22 @@
     name - Human-readable name for the subscription
     query - Datalog query that defines the materialized view
 
+  Options:
+    :rules - Rule definitions the query may invoke. A subscription on a rule
+             query recomputes after each transaction rather than updating
+             incrementally, because a rule's answer set is a fixpoint.
+
   Returns:
     Map with subscription details including :id
 
   Example:
     (create-subscription conn \"active-users\"
       '[:find ?e ?name :where [?e :user/active true] [?e :user/name ?name]])"
-  [conn name query]
+  [conn name query & {:keys [rules]}]
   (let [url (str (:base-url conn) "/api/subscriptions")
-        request-body {:name name
-                      :query (format-query query)}
+        request-body (cond-> {:name name
+                              :query (format-query query)}
+                       rules (assoc :rules (format-query rules)))
         response (http/post url
                             request-body
                             :timeout (:timeout conn)
@@ -636,18 +675,6 @@
 ;; attribute, the entity behind an ident, or the transactions in a range meant
 ;; writing a query that approximated it — or, for the transaction log, could not
 ;; be done at all.
-
-(defn- post-api
-  "POST to an API path, returning the body or throwing with the server's error."
-  [conn path body]
-  (let [response (http/post (str (:base-url conn) path)
-                            body
-                            :timeout (:timeout conn)
-                            :max-retries (:max-retries conn))]
-    (if (:success response)
-      (:body response)
-      (throw (ex-info (str "Request to " path " failed: " (:error response))
-                      {:response response})))))
 
 (defn datoms
   "Return datoms from an index, narrowed by leading components.
