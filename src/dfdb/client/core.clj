@@ -122,6 +122,22 @@
                          in-clause)]
           (some non-scalar-binding? bindings))))))
 
+(defn- format-filters
+  "Normalise :filters into the wire's list of {:name ... :args [...]}.
+
+  A filter is named rather than passed, because a predicate is a closure and
+  a closure cannot cross the wire: the server decides what may be selected,
+  and the request only chooses among them. Accepts a bare name, a name with
+  arguments, or a map."
+  [filters]
+  (mapv (fn [f]
+          (cond
+            (map? f) (cond-> {:name (name (or (:name f) (get f "name")))}
+                       (seq (:args f)) (assoc :args (vec (:args f))))
+            (sequential? f) {:name (name (first f)) :args (vec (rest f))}
+            :else {:name (name f)}))
+        filters))
+
 (defn transact!
   "Execute a transaction on the server
 
@@ -222,7 +238,7 @@
       '[:find ?name :where (ancestor 1 ?a) [?a :person/name ?name]]
       :rules '[[(ancestor ?c ?a) [?c :person/parent ?a]]
                [(ancestor ?c ?a) [?c :person/parent ?p] (ancestor ?p ?a)]])"
-  [conn query & {:keys [params as-of limit offset rules]}]
+  [conn query & {:keys [params as-of limit offset rules filters]}]
   (let [url (str (:base-url conn) "/api/query")
         ;; Convert params to positional array if query has non-scalar bindings
         converted-params (if (should-use-positional-params? query params)
@@ -234,6 +250,7 @@
                        converted-params (assoc :params converted-params)
                        rules (assoc :rules (format-query rules))
                        as-of (assoc :as-of as-of)
+                       (seq filters) (assoc :filters (format-filters filters))
                        limit (assoc :limit limit)
                        offset (assoc :offset offset))
         response (http/post url
@@ -347,12 +364,16 @@
   "Add the temporal part of a read to a request body.
 
   Every read endpoint takes the same three: an as-of map naming a
-  transaction, an instant or a custom dimension; a since bound; and history."
-  [body as-of since history]
-  (cond-> body
-    (seq as-of) (assoc :as-of as-of)
-    since (assoc :since since)
-    history (assoc :history true)))
+  transaction, an instant or a custom dimension; a since bound; and history.
+  Filters ride along the same way, since the server resolves both together."
+  ([body as-of since history]
+   (basis-request body as-of since history nil))
+  ([body as-of since history filters]
+   (cond-> body
+     (seq as-of) (assoc :as-of as-of)
+     since (assoc :since since)
+     history (assoc :history true)
+     (seq filters) (assoc :filters (format-filters filters)))))
 
 (defn entity
   "Get all attributes of an entity by ID
@@ -373,9 +394,9 @@
   Example:
     (entity conn 1)
     ;; => {:db/id 1, :user/name \"Alice\", :user/age 30}"
-  [conn entity-id & {:keys [as-of since history]}]
+  [conn entity-id & {:keys [as-of since history filters]}]
   (:entity (post-api conn "/api/entity"
-                     (basis-request {:entity entity-id} as-of since history))))
+                     (basis-request {:entity entity-id} as-of since history filters))))
 
 (defn pull
   "Execute a pull pattern on an entity, or on several
@@ -403,13 +424,13 @@
     ;; => {:db/id 1 :user/name \"Alice\", :user/age 30}
     (pull conn [:user/name] [1 2])
     ;; => [{:db/id 1 :user/name \"Alice\"} {:db/id 2 :user/name \"Bob\"}]"
-  [conn pattern entity-id & {:keys [as-of since history]}]
+  [conn pattern entity-id & {:keys [as-of since history filters]}]
   (let [many? (and (coll? entity-id) (not (map? entity-id)))
         body (basis-request
                (if many?
                  {:entities (vec entity-id) :pattern (vec pattern)}
                  {:entity entity-id :pattern (vec pattern)})
-               as-of since history)
+               as-of since history filters)
         result (post-api conn "/api/pull" body)]
     (if many? (:results result) (:result result))))
 
