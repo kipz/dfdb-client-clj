@@ -360,6 +360,17 @@
       (throw (ex-info (str "Request to " path " failed: " (:error response))
                       {:response response})))))
 
+(defn- get-api
+  "GET an API path, returning the body or throwing with the server's error."
+  [conn path]
+  (let [response (http/get-request (str (:base-url conn) path)
+                                   :timeout (:timeout conn)
+                                   :max-retries (:max-retries conn))]
+    (if (:success response)
+      (:body response)
+      (throw (ex-info (str "Request to " path " failed: " (:error response))
+                      {:response response})))))
+
 (defn- basis-request
   "Add the temporal part of a read to a request body.
 
@@ -697,6 +708,14 @@
 ;; writing a query that approximated it — or, for the transaction log, could not
 ;; be done at all.
 
+(defn- scan-body
+  "The request body the two index walks share; they differ only in path."
+  [index components limit as-of since history filters]
+  (basis-request (cond-> {:index (name index)}
+                   (seq components) (assoc :components (vec components))
+                   limit (assoc :limit limit))
+                 as-of since history filters))
+
 (defn datoms
   "Return datoms from an index, narrowed by leading components.
 
@@ -715,11 +734,21 @@
   Example:
     (datoms conn :aevt :components [:user/name])
     ;; => {:datoms [{:e 1 :a \":user/name\" :v \"Alice\" :tx 1 :added true}]}"
-  [conn index & {:keys [components limit]}]
+  [conn index & {:keys [components limit as-of since history filters]}]
   (post-api conn "/api/datoms"
-            (cond-> {:index (name index)}
-              (seq components) (assoc :components (vec components))
-              limit (assoc :limit limit))))
+            (scan-body index components limit as-of since history filters)))
+
+(defn seek-datoms
+  "Return datoms from an index, starting at the components and running on.
+
+  Unlike `datoms` the components are a starting point rather than a range to
+  stay within, so the scan continues past them to the end of the index.
+
+  Example:
+    (seek-datoms conn :aevt :components [:user/name])"
+  [conn index & {:keys [components limit as-of since history filters]}]
+  (post-api conn "/api/seek-datoms"
+            (scan-body index components limit as-of since history filters)))
 
 (defn index-range
   "Return an attribute's datoms whose value lies in [start, end).
@@ -730,12 +759,13 @@
 
   Example:
     (index-range conn :user/age :start 25 :end 40)"
-  [conn attribute & {:keys [start end limit]}]
+  [conn attribute & {:keys [start end limit as-of since history filters]}]
   (post-api conn "/api/index-range"
-            (cond-> {:attribute (str attribute)}
-              (some? start) (assoc :start start)
-              (some? end) (assoc :end end)
-              limit (assoc :limit limit))))
+            (basis-request (cond-> {:attribute (str attribute)}
+                             (some? start) (assoc :start start)
+                             (some? end) (assoc :end end)
+                             limit (assoc :limit limit))
+                           as-of since history filters)))
 
 (defn tx-range
   "Return the transactions in [start, end), each with its datoms.
@@ -750,8 +780,32 @@
   [conn ident]
   (:entity (post-api conn "/api/entid" {:ident (str ident)})))
 
+(defn ident
+  "Name an entity, the reverse of `entid`.
+
+  An entity carrying no :db/ident has no name, which comes back as the empty
+  string rather than an error."
+  [conn entity-id & {:keys [as-of since history filters]}]
+  (:ident (post-api conn "/api/ident"
+                    (basis-request {:entity entity-id} as-of since history filters))))
+
 (defn attribute
   "Report what the database knows about an attribute: whether it is indexed,
   whether its values are references, and how many datoms it has."
   [conn attr]
   (post-api conn "/api/attribute" {:attribute (str attr)}))
+
+(defn db-stats
+  "Summarise the database value at a basis: its datom count, its attribute
+  count, and the transaction it is read at.
+
+  Distinct from `stats`, which reports the query optimizer's cache."
+  [conn & {:keys [as-of since history filters]}]
+  (post-api conn "/api/db-stats"
+            (basis-request {} as-of since history filters)))
+
+(defn stats
+  "Return the query optimizer's statistics: index sizes and, per attribute,
+  cardinality, datom count and selectivity."
+  [conn]
+  (get-api conn "/api/stats"))

@@ -229,9 +229,10 @@
                                    :time-dimensions {:time/valid valid-time})]
         (is (number? (:tx-id result)))
         (is (number? (:tx-time result)))
-        ;; Check that deltas include time dimensions
-        (when (seq (:deltas result))
-          (is (map? (:dimensions (first (:deltas result))))))))))
+        ;; Time dimensions are a property of the transaction, not of each
+        ;; delta, so they are reported once.
+        (is (= 1000 (:time/valid (:dimensions result))))
+        (is (number? (:time/system (:dimensions result))))))))
 
 (deftest test-temp-id-resolution
   (when (server-running?)

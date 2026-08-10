@@ -49,3 +49,69 @@
               (str "expected the attribute's own name, got " result))
           (is (= 2 (:datoms result))
               (str "expected two datoms for " age ", got " result)))))))
+
+(deftest seek-datoms-test
+  (if-not (server-running?)
+    (println "\nSKIP: dfdb server not running on" test-server-url "\n")
+    (let [conn (dfdb/connect :base-url test-server-url)
+          base (+ 900000 (rand-int 90000))
+          attr (keyword "seekapi" (str "name" base))]
+
+      (dfdb/transact! conn [{:db/id (+ base 1) attr "Alice"}
+                            {:db/id (+ base 2) attr "Bob"}])
+
+      (testing "seek runs on past the components it starts at"
+        (let [sought (dfdb/seek-datoms conn :aevt :components [attr])
+              bounded (dfdb/datoms conn :aevt :components [attr])]
+          (is (>= (count (:datoms sought)) (count (:datoms bounded)))
+              (str "a seek cannot see fewer datoms than the bounded scan, got " sought))
+          (is (= attr (:a (first (:datoms sought))))
+              (str "the seek should start at " attr ", got " sought))))
+
+      (testing "a limit bounds the seek"
+        (let [result (dfdb/seek-datoms conn :aevt :components [attr] :limit 1)]
+          (is (= 1 (count (:datoms result)))
+              (str "expected one datom, got " result)))))))
+
+(deftest ident-test
+  (if-not (server-running?)
+    (println "\nSKIP: dfdb server not running on" test-server-url "\n")
+    (let [conn (dfdb/connect :base-url test-server-url)
+          eid (+ 900000 (rand-int 90000))
+          name-kw (keyword "identapi" (str "thing" eid))]
+
+      (dfdb/transact! conn [{:db/id eid :db/ident name-kw}])
+
+      (testing "ident names the entity entid resolves"
+        (is (= eid (dfdb/entid conn name-kw)))
+        (is (= (str name-kw) (str (dfdb/ident conn eid)))))
+
+      (testing "an entity with no :db/ident has no name"
+        (is (= "" (str (dfdb/ident conn (+ eid 1)))))))))
+
+(deftest stats-test
+  (if-not (server-running?)
+    (println "\nSKIP: dfdb server not running on" test-server-url "\n")
+    (let [conn (dfdb/connect :base-url test-server-url)
+          eid (+ 900000 (rand-int 90000))
+          attr (keyword "statsapi" (str "name" eid))]
+
+      (dfdb/transact! conn [{:db/id eid attr "Alice"}])
+
+      (testing "db-stats counts the database value"
+        (let [result (dfdb/db-stats conn)]
+          (is (pos? (:datoms result)) (str "expected datoms, got " result))
+          (is (pos? (:attributes result)) (str "expected attributes, got " result))
+          (is (pos? (:basis-t result)) (str "expected a basis, got " result))))
+
+      (testing "db-stats reads at a basis"
+        (let [now (:basis-t (dfdb/db-stats conn))
+              before (dfdb/db-stats conn :as-of {:db/tx 1})]
+          (is (<= (:basis-t before) now)
+              (str "an as-of read cannot be ahead of the current basis, got " before))))
+
+      (testing "stats reports the optimizer's cache"
+        (let [result (dfdb/stats conn)]
+          (is (some? (:total-datoms result)) (str "expected a datom count, got " result))
+          (is (sequential? (:attributes result))
+              (str "expected per-attribute statistics, got " result)))))))
