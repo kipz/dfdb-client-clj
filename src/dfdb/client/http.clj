@@ -90,6 +90,10 @@
                              (throw e))))
           opts {:http-client http-client
                 :request-method method
+                ;; A 4xx is an answer, not a transport failure: thrown, its body
+                ;; is lost and the retry loop repeats a request that cannot
+                ;; succeed.
+                :throw-exceptions false
                 :url url
                 :headers {"Content-Type" "application/transit+json"
                           "Accept" "application/transit+json"}
