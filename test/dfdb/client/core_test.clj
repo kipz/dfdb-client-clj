@@ -3,7 +3,7 @@
 
   These tests require a running dfdb-go server on localhost:8080.
   To run the server:
-    cd /Users/james.carnegie/scm/dfdb-go
+    cd /path/to/dfdb
     go run cmd/server/main.go"
   (:require [clojure.test :refer :all]
             [dfdb.client.core :as dfdb]))
@@ -24,7 +24,7 @@
   (when-not (server-running?)
     (println "\nWARNING: dfdb-go server not running on" test-server-url)
     (println "Skipping integration tests. Start the server with:")
-    (println "  cd /Users/james.carnegie/scm/dfdb-go")
+    (println "  cd /path/to/dfdb")
     (println "  go run cmd/server/main.go\n"))
   (f))
 
